@@ -1,0 +1,468 @@
+# 🚴 Predictive Maintenance for Rental Bike Fleets
+## Complete Project Workflow & Learning Guide
+
+---
+
+## 📋 Project Overview
+
+| Aspect | Details |
+|--------|---------|
+| **Team** | Anomaly Archers (Section B) |
+| **Goal** | Predict which rental bikes need maintenance using usage patterns |
+| **Dataset** | Capital Bikeshare System Data (Washington D.C.) |
+| **Techniques** | Unsupervised Learning, Anomaly Detection, Time Series Analysis |
+
+---
+
+## 🎯 What You Will Learn
+
+By the end of this project, you will understand:
+
+1. **Data Engineering** - How to clean, transform, and aggregate large-scale trip data
+2. **Feature Engineering** - Creating meaningful health proxies from raw data
+3. **Clustering (K-Means)** - Grouping bikes by usage patterns
+4. **Anomaly Detection (Isolation Forest)** - Finding bikes with suspicious behavior
+5. **Time Series Analysis** - Tracking degradation trends over time
+6. **Ranking/Recommendation Logic** - Prioritizing bikes for maintenance
+
+---
+
+## 📚 Phase 0: Foundation Concepts (Pre-requisites)
+
+Before diving into code, let's understand the key concepts:
+
+### 0.1 Why Unsupervised Learning?
+
+> [!IMPORTANT]
+> We have **NO LABELS** telling us which bikes are broken! This is the key reason we use unsupervised learning.
+
+| Learning Type | Requires Labels? | Example |
+|---------------|------------------|---------|
+| Supervised | ✅ Yes | "This bike broke on date X" |
+| Unsupervised | ❌ No | "Find natural groupings in data" |
+
+Since maintenance logs don't exist, we'll **infer** bike health from **usage patterns**.
+
+### 0.2 Core Algorithms We'll Use
+
+```mermaid
+flowchart TD
+    A[Raw Trip Data] --> B[Feature Engineering]
+    B --> C[K-Means Clustering]
+    B --> D[Isolation Forest]
+    B --> E[Time Series Analysis]
+    C --> F[Usage Profiles]
+    D --> G[Anomaly Flags]
+    E --> H[Degradation Trends]
+    F --> I[Health Score]
+    G --> I
+    H --> I
+    I --> J[Maintenance Priority Ranking]
+```
+
+### 0.3 Key Terms Explained
+
+| Term | Simple Explanation |
+|------|-------------------|
+| **K-Means Clustering** | Groups similar bikes together (like sorting socks by color) |
+| **Isolation Forest** | Finds "weird" bikes that don't fit the pattern |
+| **Rolling Average** | Smoothed trend over time (like a 7-day moving average) |
+| **Feature Engineering** | Creating new columns from raw data |
+| **Anomaly Score** | A number indicating how "strange" a bike's behavior is |
+
+---
+
+## 📅 Phase 1: Environment Setup & Data Acquisition
+
+### Step 1.1: Create Project Structure
+
+```
+AML_Project_Anomaly_Archers/
+├── data/
+│   ├── raw/                 # Original downloaded data
+│   ├── processed/           # Cleaned data
+│   └── features/            # Engineered features
+├── notebooks/
+│   ├── 01_data_exploration.ipynb
+│   ├── 02_feature_engineering.ipynb
+│   ├── 03_clustering.ipynb
+│   ├── 04_anomaly_detection.ipynb
+│   ├── 05_time_series.ipynb
+│   └── 06_health_scoring.ipynb
+├── src/
+│   ├── data_loader.py
+│   ├── feature_engineer.py
+│   ├── clustering.py
+│   ├── anomaly_detection.py
+│   └── health_scorer.py
+├── outputs/
+│   ├── figures/
+│   └── reports/
+├── requirements.txt
+└── README.md
+```
+
+### Step 1.2: Install Required Libraries
+
+```python
+# requirements.txt
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+jupyter>=1.0.0
+scipy>=1.11.0
+tqdm>=4.65.0
+```
+
+### Step 1.3: Download the Dataset
+
+> [!NOTE]
+> The Capital Bikeshare data is publicly available and updated regularly.
+
+**Data Source**: https://capitalbikeshare.com/system-data
+
+Download files for **at least 1-2 years** of trip data (CSV format).
+
+---
+
+## 🔍 Phase 2: Data Exploration & Understanding
+
+### Step 2.1: Load and Inspect Data
+
+**What you'll learn**: How to load large CSV files and understand their structure
+
+```python
+# Pseudocode - we'll write real code together
+import pandas as pd
+
+# Load a sample file first
+df = pd.read_csv('data/raw/202301-capitalbikeshare-tripdata.csv')
+
+# Basic inspection
+print(df.shape)           # How many rows and columns?
+print(df.dtypes)          # What type is each column?
+print(df.head())          # First 5 rows
+print(df.isnull().sum())  # Missing values?
+print(df.describe())      # Statistical summary
+```
+
+### Step 2.2: Understand Key Columns
+
+| Column | Description | Importance |
+|--------|-------------|------------|
+| `ride_id` | Unique trip identifier | Low (just an ID) |
+| `started_at` | Trip start timestamp | **HIGH** (for time analysis) |
+| `ended_at` | Trip end timestamp | **HIGH** (for duration) |
+| `start_station_name` | Starting location | Medium |
+| `end_station_name` | Ending location | Medium |
+| `rideable_type` | Bike type (classic/electric) | **HIGH** |
+| `member_casual` | User type | Medium |
+
+### Step 2.3: Key Exploration Questions
+
+- [ ] How many unique bikes are there?
+- [ ] What's the distribution of trip durations?
+- [ ] Are there bikes with unusually short/long trips?
+- [ ] How does usage vary by time of day/week/month?
+- [ ] Are there bikes that suddenly stop appearing in the data?
+
+---
+
+## ⚙️ Phase 3: Feature Engineering (CRITICAL PHASE)
+
+> [!WARNING]
+> This is the **most important phase**! The quality of your features determines project success.
+
+### Step 3.1: Aggregate Per-Bike Features
+
+We'll create a **bike-level** dataset with these features:
+
+| Feature | Description | Why It Matters |
+|---------|-------------|----------------|
+| `total_trips` | Total number of trips | High usage = more wear |
+| `total_duration_hrs` | Cumulative ride time | More hours = more stress |
+| `avg_trip_duration` | Average trip length | Short trips may indicate issues |
+| `std_trip_duration` | Variability in trips | Inconsistent behavior = problem? |
+| `days_in_service` | How long the bike has been active | Age indicator |
+| `trips_per_day` | Usage intensity | Heavy use bikes need more care |
+| `unique_stations` | Number of stations visited | Mobility indicator |
+| `last_seen_days_ago` | Days since last trip | Missing bikes may be broken |
+
+### Step 3.2: Time-Based Features
+
+```python
+# Features derived from timestamps
+- hour_distribution  # Usage by hour of day
+- weekday_vs_weekend # Usage pattern difference
+- monthly_trend      # Is usage increasing or decreasing?
+```
+
+### Step 3.3: Stress Proxy Features
+
+Since we can't measure mechanical stress directly, we'll create **proxies**:
+
+| Stress Proxy | Formula | Interpretation |
+|--------------|---------|----------------|
+| `usage_intensity` | total_duration / days_in_service | Higher = more stressed |
+| `trip_anomaly_score` | trips with duration > 3σ from mean | Unusual usage events |
+| `burst_factor` | max_daily_trips / avg_daily_trips | Spikes in usage |
+
+---
+
+## 🔵 Phase 4: K-Means Clustering
+
+### Step 4.1: What is K-Means?
+
+```mermaid
+flowchart LR
+    A[All Bikes] --> B[Choose K Centers]
+    B --> C[Assign Bikes to Nearest Center]
+    C --> D[Update Centers]
+    D --> E{Centers Changed?}
+    E -->|Yes| C
+    E -->|No| F[Final Clusters]
+```
+
+**Simple Analogy**: Imagine sorting all bikes into K buckets based on how similar they are.
+
+### Step 4.2: Feature Preparation
+
+```python
+# Steps before clustering
+1. Select relevant features
+2. Handle missing values (imputation or removal)
+3. Normalize/Standardize features (CRITICAL!)
+4. Determine optimal K using Elbow Method
+```
+
+> [!IMPORTANT]
+> **Why normalize?** K-Means uses distance. A feature ranging 0-1000000 will dominate over one ranging 0-10.
+
+### Step 4.3: Determine Optimal K
+
+Use the **Elbow Method** and **Silhouette Score**:
+
+| K | Inertia | Silhouette Score |
+|---|---------|------------------|
+| 2 | ? | ? |
+| 3 | ? | ? |
+| 4 | ? | ? |
+| 5 | ? | ? |
+
+### Step 4.4: Interpret Clusters
+
+After clustering, we'll name each cluster based on its characteristics:
+
+| Cluster | Name | Characteristics |
+|---------|------|-----------------|
+| 0 | "Heavy Commuter" | High trips, high duration, consistent |
+| 1 | "Weekend Warrior" | Low trips, long duration, weekend peaks |
+| 2 | "Occasional User" | Very low trips, sporadic |
+| 3 | "Problem Bikes" | Low trips, short durations, infrequent |
+
+---
+
+## 🔴 Phase 5: Anomaly Detection (Isolation Forest)
+
+### Step 5.1: What is Isolation Forest?
+
+**Key Insight**: Anomalies are easier to "isolate" than normal points.
+
+```mermaid
+flowchart TD
+    A[All Data Points] --> B[Random Feature Split]
+    B --> C{Point Isolated?}
+    C -->|Few Splits| D[ANOMALY - Easy to Isolate]
+    C -->|Many Splits| E[NORMAL - Hard to Isolate]
+```
+
+**Simple Analogy**: If a bike's behavior can be separated from others with very few questions, it's probably weird.
+
+### Step 5.2: Apply Isolation Forest
+
+```python
+from sklearn.ensemble import IsolationForest
+
+# Train the model
+iso_forest = IsolationForest(
+    contamination=0.05,  # Expected % of anomalies (tune this!)
+    random_state=42
+)
+
+# Get anomaly scores (-1 = anomaly, 1 = normal)
+predictions = iso_forest.fit_predict(scaled_features)
+anomaly_scores = iso_forest.decision_function(scaled_features)
+```
+
+### Step 5.3: Analyze Anomalies
+
+Questions to answer:
+- [ ] What % of bikes are flagged as anomalies?
+- [ ] What features make them anomalous?
+- [ ] Do anomalies cluster in specific usage profiles?
+
+---
+
+## 📈 Phase 6: Time Series Analysis
+
+### Step 6.1: Create Time-Series Data
+
+Transform trip data into **daily aggregates per bike**:
+
+| bike_id | date | daily_trips | daily_duration | avg_trip_length |
+|---------|------|-------------|----------------|-----------------|
+| B001 | 2023-01-01 | 5 | 45 mins | 9 mins |
+| B001 | 2023-01-02 | 3 | 30 mins | 10 mins |
+| ... | ... | ... | ... | ... |
+
+### Step 6.2: Trend Analysis
+
+```python
+# Rolling averages to smooth data
+df['rolling_7d_trips'] = df.groupby('bike_id')['daily_trips'].rolling(7).mean()
+
+# Detect degradation
+# If rolling average is decreasing, bike might be failing
+```
+
+### Step 6.3: Degradation Detection
+
+| Pattern | Interpretation |
+|---------|----------------|
+| Steady decline in daily trips | Possible mechanical issue |
+| Sudden drop | Bike may be damaged |
+| Missing data | Bike out of service |
+| Increasing short trips | Something wrong, users abandoning rides |
+
+---
+
+## 🏆 Phase 7: Health Scoring & Ranking
+
+### Step 7.1: Combine All Signals
+
+```mermaid
+flowchart LR
+    A[Cluster Assignment] --> D[Health Score]
+    B[Anomaly Score] --> D
+    C[Degradation Trend] --> D
+    D --> E[Priority Rank]
+```
+
+### Step 7.2: Health Score Formula
+
+```python
+health_score = (
+    w1 * cluster_risk_score +        # From K-Means
+    w2 * anomaly_score +              # From Isolation Forest
+    w3 * degradation_indicator        # From Time Series
+)
+
+# Where w1 + w2 + w3 = 1 (weights to be tuned)
+```
+
+### Step 7.3: Health Categories
+
+| Score Range | Category | Action |
+|-------------|----------|--------|
+| 0.0 - 0.3 | 🟢 Stable | No action needed |
+| 0.3 - 0.6 | 🟡 Warning | Schedule maintenance |
+| 0.6 - 1.0 | 🔴 Critical | Immediate attention |
+
+### Step 7.4: Maintenance Priority List
+
+Final output: A ranked list of bikes sorted by health score (worst first).
+
+| Rank | Bike ID | Health Score | Category | Reason |
+|------|---------|--------------|----------|--------|
+| 1 | B1234 | 0.89 | Critical | Anomaly + Declining |
+| 2 | B5678 | 0.75 | Critical | Heavy use + Old |
+| 3 | B9012 | 0.62 | Warning | Anomaly detected |
+| ... | ... | ... | ... | ... |
+
+---
+
+## 📊 Phase 8: Visualization & Reporting
+
+### Step 8.1: Required Visualizations
+
+| Visualization | Purpose |
+|---------------|---------|
+| Cluster scatter plot (PCA/t-SNE) | Show bike groupings |
+| Anomaly distribution | Where are anomalies? |
+| Time series trends | Degradation patterns |
+| Health score distribution | Overall fleet health |
+| Feature importance | What drives health? |
+
+### Step 8.2: Dashboard Components
+
+1. **Fleet Overview**: % bikes in each health category
+2. **Priority Queue**: Top 10 bikes needing service
+3. **Trends**: Fleet health over time
+4. **Insights**: Key findings and recommendations
+
+---
+
+## ✅ Phase 9: Project Deliverables Checklist
+
+### Code Deliverables
+- [ ] Complete Jupyter notebooks (exploratory + final)
+- [ ] Modular Python scripts in `src/`
+- [ ] `requirements.txt` with all dependencies
+- [ ] `README.md` with setup and run instructions
+
+### Analysis Deliverables
+- [ ] Cluster analysis report
+- [ ] Anomaly detection findings
+- [ ] Time series degradation report
+- [ ] Final health scorecards
+
+### Presentation Deliverables
+- [ ] Project presentation slides
+- [ ] Demo of the health scoring system
+- [ ] Business impact analysis
+
+---
+
+## 📅 Suggested Timeline
+
+| Week | Phase | Activities |
+|------|-------|------------|
+| Week 1 | Setup & Exploration | Environment setup, data download, EDA |
+| Week 2 | Feature Engineering | Create all bike-level features |
+| Week 3 | Clustering | K-Means + interpretation |
+| Week 4 | Anomaly Detection | Isolation Forest + analysis |
+| Week 5 | Time Series | Degradation trend analysis |
+| Week 6 | Integration | Health scoring + ranking |
+| Week 7 | Polish | Visualization + documentation |
+| Week 8 | Final | Presentation + submission |
+
+---
+
+## 🚀 Next Steps
+
+Let's start building! Here's what we'll do first:
+
+1. **Set up the project structure** on your machine
+2. **Download the dataset** from Capital Bikeshare
+3. **Create the first notebook** for data exploration
+
+> [!TIP]
+> We'll work through each phase step-by-step. Don't worry about understanding everything now - we'll explain each concept as we implement it!
+
+---
+
+## 📖 Resources for Learning
+
+| Topic | Resource |
+|-------|----------|
+| K-Means | [Scikit-learn Documentation](https://scikit-learn.org/stable/modules/clustering.html#k-means) |
+| Isolation Forest | [Original Paper Summary](https://cs.nju.edu.cn/zhouzh/zhouzh.files/publication/icdm08b.pdf) |
+| Time Series | [Pandas Time Series Guide](https://pandas.pydata.org/docs/user_guide/timeseries.html) |
+| Feature Scaling | [Why Normalize Data?](https://scikit-learn.org/stable/modules/preprocessing.html) |
+
+---
+
+*This workflow document will be updated as we progress through the project. Ask me anything if any concept is unclear!*
